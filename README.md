@@ -41,7 +41,7 @@ The Windows implementation leverages Windows Presentation Foundation (WPF) to pr
 **Screenshots:**
 (Coming soon)
 
-### Python Version (Cross-Platform)
+### Python Version (Cross-Platform) - in the Python - LInux Fork
 
 The Python implementation uses Tkinter for a consistent experience across Linux, macOS, and Windows.
 
