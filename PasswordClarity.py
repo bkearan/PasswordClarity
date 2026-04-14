@@ -1,295 +1,260 @@
+import os
+import platform
+import re
+import sys
 import tkinter as tk
 from tkinter import font as tkfont
-import re
-import math
+from tkinter import ttk
+
+# Handle PyInstaller's temp folder vs running from source
+if getattr(sys, '_MEIPASS', None):
+    BASE_PATH = sys._MEIPASS
+else:
+    BASE_PATH = os.path.dirname(os.path.abspath(__file__))
 
 
 class PasswordVisualizer:
     def __init__(self, master):
         self.master = master
         master.title("Password Clarity")
-        master.geometry("600x350")
-        master.resizable(False, False)
+        master.geometry("800x420")
+        master.resizable(True, False)
 
-        # Configure fonts
-        self.title_font = tkfont.Font(family="DejaVu Sans", size=14)
-        self.input_font = tkfont.Font(family="Monospace", size=18)
-        self.display_font = tkfont.Font(family="Monospace", size=24)
-        self.stats_font = tkfont.Font(family="DejaVu Sans", size=12)
-        self.count_font = tkfont.Font(family="DejaVu Sans", size=12, weight="bold")
+        # --- Set window icon ---
+        icon_path = os.path.join(BASE_PATH, "BK_Beard_Hair_Icon.ico")
+        if os.path.exists(icon_path):
+            master.iconbitmap(icon_path)
 
-        # Colors for character types
+        # --- Cross-platform font selection ---
+        os_name = platform.system()
+        if os_name == "Windows":
+            sans_family = "Segoe UI"
+            mono_family = "Consolas"
+        elif os_name == "Darwin":
+            sans_family = "Helvetica Neue"
+            mono_family = "Menlo"
+        else:
+            sans_family = "DejaVu Sans"
+            mono_family = "DejaVu Sans Mono"
+
+        self.title_font = tkfont.Font(family=sans_family, size=14)
+        self.input_font = tkfont.Font(family=mono_family, size=16)
+        self.display_font = tkfont.Font(family=mono_family, size=32)
+        self.stats_font = tkfont.Font(family=sans_family, size=12)
+        self.count_font = tkfont.Font(family=sans_family, size=12, weight="bold")
+
         self.colors = {
-            'capital': "#00AA00",  # Green
-            'lower': "#0000AA",  # Blue
-            'number': "#AA0000",  # Red
-            'symbol': "#000000"  # Black
+            'capital': "#00AA00",
+            'lower': "#0000AA",
+            'number': "#AA0000",
+            'symbol': "#000000"
         }
 
-        # Create frames for layout
+        # --- ttk style setup ---
+        self.style = ttk.Style()
+        try:
+            self.style.theme_use("clam")
+        except tk.TclError:
+            pass
+
+        self.style.configure("Gray.TButton",
+                             font=(sans_family, 11),
+                             background="#757575",
+                             foreground="white",
+                             borderwidth=1,
+                             focuscolor="none")
+        self.style.map("Gray.TButton",
+                       background=[("active", "#424242"),
+                                   ("disabled", "#BDBDBD")],
+                       foreground=[("disabled", "#666666")])
+
+        self.style.configure("OK.TButton",
+                             font=(sans_family, 14),
+                             padding=(20, 8))
+
+        # Main frame
         self.main_frame = tk.Frame(master, padx=20, pady=20)
         self.main_frame.pack(fill=tk.BOTH, expand=True)
 
-        # Title
         self.title_label = tk.Label(
-            self.main_frame,
-            text="Enter password to clarify:",
-            font=self.title_font
-        )
-        self.title_label.pack(anchor=tk.W, pady=(0, 10))
+            self.main_frame, text="Enter password to clarify:", font=self.title_font)
+        self.title_label.pack(anchor=tk.W, pady=(0, 5))
 
-        # Input box
+        # Input row: entry + copy button
+        self.input_row = tk.Frame(self.main_frame)
+        self.input_row.pack(fill=tk.X, pady=(0, 10))
+
         self.input_var = tk.StringVar()
         self.input_var.trace_add("write", self.update_display)
         self.input_box = tk.Entry(
-            self.main_frame,
-            textvariable=self.input_var,
-            font=self.input_font,
-            width=40
-        )
-        self.input_box.pack(fill=tk.X, pady=(0, 10))
+            self.input_row, textvariable=self.input_var,
+            font=self.input_font, width=40, justify='left')
+        self.input_box.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
 
-        # Password display (using Canvas with text items for colored characters)
-        self.display_frame = tk.Frame(self.main_frame, height=80)
+        self.copy_pw_button = ttk.Button(
+            self.input_row, text="Copy Password",
+            command=self.copy_password, style="Gray.TButton")
+        self.copy_pw_button.pack(side=tk.LEFT)
+
+        # Color-coded display
+        self.display_frame = tk.Frame(self.main_frame, height=90)
         self.display_frame.pack(fill=tk.X, pady=10)
         self.display_frame.pack_propagate(False)
 
-        self.display_canvas = tk.Canvas(self.display_frame, bg="white")
-        self.display_canvas.pack(fill=tk.BOTH, expand=True)
+        self.password_text = tk.Text(
+            self.display_frame, font=self.display_font, height=2,
+            wrap=tk.NONE, state=tk.DISABLED, bg="white",
+            relief=tk.SUNKEN, bd=1, cursor="arrow")
 
-        # Strength score
+        self.h_scrollbar = tk.Scrollbar(
+            self.display_frame, orient=tk.HORIZONTAL, command=self.password_text.xview)
+        self.password_text.configure(xscrollcommand=self.h_scrollbar.set)
+
+        self.password_text.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        self.h_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
+
+        self.password_text.tag_configure("uppercase", foreground=self.colors['capital'])
+        self.password_text.tag_configure("lowercase", foreground=self.colors['lower'])
+        self.password_text.tag_configure("digit", foreground=self.colors['number'])
+        self.password_text.tag_configure("symbol", foreground=self.colors['symbol'])
+
+        # Strength bar + label + counts
         self.strength_frame = tk.Frame(self.main_frame)
         self.strength_frame.pack(fill=tk.X, pady=(0, 10))
 
         self.strength_label = tk.Label(
-            self.strength_frame,
-            text="Strength: 0/100",
-            font=self.count_font,
-            fg="#AA0000"  # Default to red
-        )
+            self.strength_frame, text="Strength: 0/100",
+            font=self.count_font, fg="#AA0000", width=14, anchor=tk.E)
         self.strength_label.pack(side=tk.RIGHT)
 
-        # Character counts
-        self.counts_frame = tk.Frame(self.main_frame)
-        self.counts_frame.pack(pady=(0, 20))
+        self.strength_bar = ttk.Progressbar(
+            self.strength_frame, orient=tk.HORIZONTAL,
+            length=200, mode='determinate', maximum=100, value=0)
+        self.strength_bar.pack(side=tk.RIGHT, padx=(0, 8))
 
-        # Capital count
-        tk.Label(
-            self.counts_frame,
-            text="Capital:",
-            font=self.stats_font,
-            fg=self.colors['capital']
-        ).pack(side=tk.LEFT, padx=(0, 5))
+        self.counts_frame = tk.Frame(self.strength_frame)
+        self.counts_frame.pack(side=tk.LEFT)
 
-        self.capital_count = tk.Label(
-            self.counts_frame,
-            text="0",
-            font=self.count_font,
-            fg=self.colors['capital']
-        )
+        tk.Label(self.counts_frame, text="Capital:", font=self.stats_font,
+                 fg=self.colors['capital']).pack(side=tk.LEFT, padx=(0, 5))
+        self.capital_count = tk.Label(self.counts_frame, text="0",
+                                      font=self.count_font, fg=self.colors['capital'])
         self.capital_count.pack(side=tk.LEFT, padx=(0, 15))
 
-        # Lowercase count
-        tk.Label(
-            self.counts_frame,
-            text="Lower:",
-            font=self.stats_font,
-            fg=self.colors['lower']
-        ).pack(side=tk.LEFT, padx=(0, 5))
-
-        self.lower_count = tk.Label(
-            self.counts_frame,
-            text="0",
-            font=self.count_font,
-            fg=self.colors['lower']
-        )
+        tk.Label(self.counts_frame, text="Lower:", font=self.stats_font,
+                 fg=self.colors['lower']).pack(side=tk.LEFT, padx=(0, 5))
+        self.lower_count = tk.Label(self.counts_frame, text="0",
+                                     font=self.count_font, fg=self.colors['lower'])
         self.lower_count.pack(side=tk.LEFT, padx=(0, 15))
 
-        # Number count
-        tk.Label(
-            self.counts_frame,
-            text="Number:",
-            font=self.stats_font,
-            fg=self.colors['number']
-        ).pack(side=tk.LEFT, padx=(0, 5))
-
-        self.number_count = tk.Label(
-            self.counts_frame,
-            text="0",
-            font=self.count_font,
-            fg=self.colors['number']
-        )
+        tk.Label(self.counts_frame, text="Number:", font=self.stats_font,
+                 fg=self.colors['number']).pack(side=tk.LEFT, padx=(0, 5))
+        self.number_count = tk.Label(self.counts_frame, text="0",
+                                      font=self.count_font, fg=self.colors['number'])
         self.number_count.pack(side=tk.LEFT, padx=(0, 15))
 
-        # Symbol count
-        tk.Label(
-            self.counts_frame,
-            text="Symbol:",
-            font=self.stats_font,
-            fg=self.colors['symbol']
-        ).pack(side=tk.LEFT, padx=(0, 5))
-
-        self.symbol_count = tk.Label(
-            self.counts_frame,
-            text="0",
-            font=self.count_font,
-            fg=self.colors['symbol']
-        )
+        tk.Label(self.counts_frame, text="Symbol:", font=self.stats_font,
+                 fg=self.colors['symbol']).pack(side=tk.LEFT, padx=(0, 5))
+        self.symbol_count = tk.Label(self.counts_frame, text="0",
+                                      font=self.count_font, fg=self.colors['symbol'])
         self.symbol_count.pack(side=tk.LEFT)
 
-        # OK button
-        self.ok_button = tk.Button(
-            self.main_frame,
-            text="OK",
-            command=self.on_ok,
-            width=10,
-            height=2,
-            font=self.title_font
-        )
-        self.ok_button.pack()
+        self.ok_button = ttk.Button(
+            self.main_frame, text="OK", command=self.on_ok,
+            width=10, style="OK.TButton")
+        self.ok_button.pack(pady=(10, 0))
 
-        # Handle Enter key
         self.input_box.bind("<Return>", lambda event: self.on_ok())
-
-        # Set focus to input box
         self.input_box.focus_set()
 
-        # Result variable
         self.result = None
 
-    def get_password_strength(self, password):
-        """Calculate password strength and character counts"""
-        if not password:
-            return {
-                'score': 0,
-                'capitals': 0,
-                'lowers': 0,
-                'numbers': 0,
-                'symbols': 0
-            }
+    def copy_password(self):
+        pw = self.input_var.get()
+        if pw:
+            self.master.clipboard_clear()
+            self.master.clipboard_append(pw)
+            original = self.copy_pw_button.cget("text")
+            self.copy_pw_button.config(text="Copied!")
+            self.master.after(1500, lambda: self.copy_pw_button.config(text=original))
 
-        # Count character types
+    def get_password_strength(self, password):
+        if not password:
+            return {'score': 0, 'capitals': 0, 'lowers': 0, 'numbers': 0, 'symbols': 0}
+
         capitals = len(re.findall(r'[A-Z]', password))
         lowers = len(re.findall(r'[a-z]', password))
         numbers = len(re.findall(r'\d', password))
         symbols = len(re.findall(r'[^A-Za-z0-9]', password))
         length = len(password)
 
-        # Basic scoring algorithm
-        score = 0
+        score = min(length * 4, 40)
+        if capitals > 0: score += min(capitals * 2, 10)
+        if lowers > 0: score += min(lowers * 2, 10)
+        if numbers > 0: score += min(numbers * 2, 10)
+        if symbols > 0: score += min(symbols * 3, 15)
 
-        # Length points (up to 40 points)
-        score += min(length * 4, 40)
-
-        # Character type points
-        if capitals > 0:
-            score += min(capitals * 2, 10)
-        if lowers > 0:
-            score += min(lowers * 2, 10)
-        if numbers > 0:
-            score += min(numbers * 2, 10)
-        if symbols > 0:
-            score += min(symbols * 3, 15)
-
-        # Bonus for mixture of character types (up to 15 points)
-        types_used = 0
-        if capitals > 0:
-            types_used += 1
-        if lowers > 0:
-            types_used += 1
-        if numbers > 0:
-            types_used += 1
-        if symbols > 0:
-            types_used += 1
+        types_used = sum(1 for x in [capitals, lowers, numbers, symbols] if x > 0)
         score += types_used * 5
 
         return {
             'score': min(score, 100),
-            'capitals': capitals,
-            'lowers': lowers,
-            'numbers': numbers,
-            'symbols': symbols
+            'capitals': capitals, 'lowers': lowers,
+            'numbers': numbers, 'symbols': symbols
         }
 
     def update_display(self, *args):
-        """Update the display when the password changes"""
-        # Clear the canvas
-        self.display_canvas.delete("all")
-
         password = self.input_var.get()
-
-        # Calculate password strength and counts
         strength = self.get_password_strength(password)
 
-        # Update character counts
         self.capital_count.config(text=str(strength['capitals']))
         self.lower_count.config(text=str(strength['lowers']))
         self.number_count.config(text=str(strength['numbers']))
         self.symbol_count.config(text=str(strength['symbols']))
 
-        # Update strength score with color
         score = strength['score']
         self.strength_label.config(text=f"Strength: {score}/100")
+        self.strength_bar['value'] = score
 
-        # Set strength score color
         if score < 40:
-            self.strength_label.config(fg="#AA0000")  # Red
+            self.strength_label.config(fg="#AA0000")
+            self.style.configure("Horizontal.TProgressbar", troughcolor="#f0f0f0", background="#AA0000")
         elif score < 70:
-            self.strength_label.config(fg="#AA6600")  # Orange
+            self.strength_label.config(fg="#FF8800")
+            self.style.configure("Horizontal.TProgressbar", troughcolor="#f0f0f0", background="#FF8800")
         else:
-            self.strength_label.config(fg="#00AA00")  # Green
+            self.strength_label.config(fg="#00AA00")
+            self.style.configure("Horizontal.TProgressbar", troughcolor="#f0f0f0", background="#00AA00")
 
-        # Calculate display metrics
         if not password:
+            self.password_text.config(state=tk.NORMAL)
+            self.password_text.delete(1.0, tk.END)
+            self.password_text.config(state=tk.DISABLED)
             return
 
-        # Display the password with color coding
-        canvas_width = self.display_canvas.winfo_width()
-        if canvas_width < 10:  # Not yet properly sized
-            self.master.update_idletasks()
-            canvas_width = self.display_canvas.winfo_width()
+        self.password_text.config(state=tk.NORMAL)
+        self.password_text.delete(1.0, tk.END)
 
-        char_width = self.display_font.measure('M')  # Monospace character width
-        total_width = char_width * len(password)
+        for char in password:
+            if re.match(r'[A-Z]', char): tag = "uppercase"
+            elif re.match(r'[a-z]', char): tag = "lowercase"
+            elif re.match(r'\d', char): tag = "digit"
+            else: tag = "symbol"
+            self.password_text.insert(tk.END, char, tag)
 
-        # Center position
-        start_x = (canvas_width - total_width) / 2
-        if start_x < 0:
-            start_x = 10
-
-        # Draw each character with appropriate color
-        for i, char in enumerate(password):
-            if re.match(r'[A-Z]', char):
-                color = self.colors['capital']
-            elif re.match(r'[a-z]', char):
-                color = self.colors['lower']
-            elif re.match(r'\d', char):
-                color = self.colors['number']
-            else:
-                color = self.colors['symbol']
-
-            x_pos = start_x + (i * char_width)
-            self.display_canvas.create_text(
-                x_pos,
-                40,  # Vertical center of canvas
-                text=char,
-                fill=color,
-                font=self.display_font,
-                anchor=tk.W
-            )
+        self.password_text.tag_add("center", "1.0", "end")
+        self.password_text.tag_configure("center", justify='center')
+        self.password_text.config(state=tk.DISABLED)
 
     def on_ok(self):
-        """Handle OK button click or Enter key"""
         self.result = self.input_var.get()
         self.master.destroy()
 
     def get_result(self):
-        """Return the entered password"""
         return self.result
 
 
 def show_password_window():
-    """Show the password visualizer window and return the result"""
     root = tk.Tk()
     app = PasswordVisualizer(root)
     root.mainloop()
